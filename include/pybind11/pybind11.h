@@ -1244,7 +1244,9 @@ public:
                         /* m_slots */ nullptr,
                         /* m_traverse */ nullptr,
                         /* m_clear */ nullptr,
-                        /* m_free */ nullptr};
+                        // iOS: cleanup the local internals when leaving
+                        /* m_free */ +[](void *) { detail::clear_local_internals(); }};
+//                      /* m_free */ nullptr};
         auto *m = PyModule_Create(def);
         if (m == nullptr) {
             if (PyErr_Occurred()) {

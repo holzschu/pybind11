@@ -192,15 +192,19 @@ class Pybind11Extension(_Extension):  # type: ignore[misc]
         ldflags = []
 
         if MACOS and "MACOSX_DEPLOYMENT_TARGET" not in os.environ:
-            # C++17 requires a higher min version of macOS. An earlier version
-            # (10.12 or 10.13) can be set manually via environment variable if
-            # you are careful in your feature usage, but 10.14 is the safest
-            # setting for general use. However, never set higher than the
-            # current macOS version!
-            current_macos = tuple(int(x) for x in platform.mac_ver()[0].split(".")[:2])
-            desired_macos = (10, 9) if level < 17 else (10, 14)
-            macos_string = ".".join(str(x) for x in min(current_macos, desired_macos))
-            macosx_min = f"-mmacosx-version-min={macos_string}"
+            platform = os.getenv('PLATFORM') or 'macosx'
+            if platform.startswith('iphone'):
+                macosx_min = f"-miphoneos-version-min=14.0"
+            else:
+                # C++17 requires a higher min version of macOS. An earlier version
+                # (10.12 or 10.13) can be set manually via environment variable if
+                # you are careful in your feature usage, but 10.14 is the safest
+                # setting for general use. However, never set higher than the
+                # current macOS version!
+                current_macos = tuple(int(x) for x in platform.mac_ver()[0].split(".")[:2])
+                desired_macos = (10, 9) if level < 17 else (10, 14)
+                macos_string = ".".join(str(x) for x in min(current_macos, desired_macos))
+                macosx_min = f"-mmacosx-version-min={macos_string}"
             cflags += [macosx_min]
             ldflags += [macosx_min]
 
