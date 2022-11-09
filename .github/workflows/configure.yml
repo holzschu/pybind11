@@ -40,7 +40,7 @@ jobs:
     - uses: actions/checkout@v3
 
     - name: Setup Python 3.7
-      uses: actions/setup-python@v3
+      uses: actions/setup-python@v4
       with:
         python-version: 3.7
         architecture: ${{ matrix.arch }}
@@ -51,7 +51,7 @@ jobs:
     # An action for adding a specific version of CMake:
     #   https://github.com/jwlawson/actions-setup-cmake
     - name: Setup CMake ${{ matrix.cmake }}
-      uses: jwlawson/actions-setup-cmake@v1.12
+      uses: jwlawson/actions-setup-cmake@v1.13
       with:
         cmake-version: ${{ matrix.cmake }}
 

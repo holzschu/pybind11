@@ -10,12 +10,12 @@
 #pragma once
 
 #define PYBIND11_VERSION_MAJOR 2
-#define PYBIND11_VERSION_MINOR 10
+#define PYBIND11_VERSION_MINOR 11
 #define PYBIND11_VERSION_PATCH 0.dev1
 
 // Similar to Python's convention: https://docs.python.org/3/c-api/apiabiversion.html
 // Additional convention: 0xD = dev
-#define PYBIND11_VERSION_HEX 0x020A00D1
+#define PYBIND11_VERSION_HEX 0x020B00D1
 
 #define PYBIND11_NAMESPACE_BEGIN(name) namespace name {
 #define PYBIND11_NAMESPACE_END(name) }
@@ -38,6 +38,7 @@
 #            define PYBIND11_CPP17
 #            if __cplusplus >= 202002L
 #                define PYBIND11_CPP20
+// Please update tests/pybind11_tests.cpp `cpp_std()` when adding a macro here.
 #            endif
 #        endif
 #    endif
@@ -95,13 +96,10 @@
 #endif
 
 #if !defined(PYBIND11_EXPORT_EXCEPTION)
-#    ifdef __MINGW32__
-// workaround for:
-// error: 'dllexport' implies default visibility, but xxx has already been declared with a
-// different visibility
-#        define PYBIND11_EXPORT_EXCEPTION
-#    else
+#    if defined(__apple_build_version__)
 #        define PYBIND11_EXPORT_EXCEPTION PYBIND11_EXPORT
+#    else
+#        define PYBIND11_EXPORT_EXCEPTION
 #    endif
 #endif
 
@@ -204,11 +202,8 @@
 #    endif
 #endif
 
-#if defined(__cpp_lib_char8_t) && __cpp_lib_char8_t >= 201811L
-#    define PYBIND11_HAS_U8STRING
-#endif
-
 #include <Python.h>
+// Reminder: WITH_THREAD is always defined if PY_VERSION_HEX >= 0x03070000
 #if PY_VERSION_HEX < 0x03060000
 #    error "PYTHON < 3.6 IS UNSUPPORTED. pybind11 v2.9 was the last to support Python 2 and 3.5."
 #endif
@@ -230,6 +225,10 @@
 
 #if defined(copysign)
 #    undef copysign
+#endif
+
+#if defined(PYPY_VERSION) && !defined(PYBIND11_SIMPLE_GIL_MANAGEMENT)
+#    define PYBIND11_SIMPLE_GIL_MANAGEMENT
 #endif
 
 #if defined(_MSC_VER)
@@ -256,6 +255,11 @@
 #    if __has_include(<version>)
 #        include <version>
 #    endif
+#endif
+
+// Must be after including <version> or one of the other headers specified by the standard
+#if defined(__cpp_lib_char8_t) && __cpp_lib_char8_t >= 201811L
+#    define PYBIND11_HAS_U8STRING
 #endif
 
 // #define PYBIND11_STR_LEGACY_PERMISSIVE
@@ -897,12 +901,6 @@ using expand_side_effects = bool[];
 
 PYBIND11_NAMESPACE_END(detail)
 
-#if defined(_MSC_VER)
-#    pragma warning(push)
-#    pragma warning(disable : 4275)
-//     warning C4275: An exported class was derived from a class that wasn't exported.
-//     Can be ignored when derived from a STL class.
-#endif
 /// C++ bindings of builtin Python exceptions
 class PYBIND11_EXPORT_EXCEPTION builtin_exception : public std::runtime_error {
 public:
@@ -910,9 +908,6 @@ public:
     /// Set the error using the Python C API
     virtual void set_error() const = 0;
 };
-#if defined(_MSC_VER)
-#    pragma warning(pop)
-#endif
 
 #define PYBIND11_RUNTIME_EXCEPTION(name, type)                                                    \
     class PYBIND11_EXPORT_EXCEPTION name : public builtin_exception {                             \
@@ -1032,12 +1027,7 @@ PYBIND11_NAMESPACE_END(detail)
 ///  - regular: static_cast<Return (Class::*)(Arg0, Arg1, Arg2)>(&Class::func)
 ///  - sweet:   overload_cast<Arg0, Arg1, Arg2>(&Class::func)
 template <typename... Args>
-#    if (defined(_MSC_VER) && _MSC_VER < 1920) /* MSVC 2017 */                                    \
-        || (defined(__clang__) && __clang_major__ == 5)
-static constexpr detail::overload_cast_impl<Args...> overload_cast = {};
-#    else
-static constexpr detail::overload_cast_impl<Args...> overload_cast;
-#    endif
+static constexpr detail::overload_cast_impl<Args...> overload_cast{};
 #endif
 
 /// Const member function selector for overload_cast
@@ -1155,6 +1145,24 @@ constexpr inline bool silence_msvc_c4127(bool cond) { return cond; }
 
 #else
 #    define PYBIND11_SILENCE_MSVC_C4127(...) __VA_ARGS__
+#endif
+
+#if defined(__clang__)                                                                            \
+    && (defined(__apple_build_version__) /* AppleClang 13.0.0.13000029 was the only data point    \
+                                            available. */                                         \
+        || (__clang_major__ >= 7                                                                  \
+            && __clang_major__ <= 12) /* Clang 3, 5, 13, 14, 15 do not generate the warning. */   \
+    )
+#    define PYBIND11_DETECTED_CLANG_WITH_MISLEADING_CALL_STD_MOVE_EXPLICITLY_WARNING
+// Example:
+// tests/test_kwargs_and_defaults.cpp:46:68: error: local variable 'args' will be copied despite
+// being returned by name [-Werror,-Wreturn-std-move]
+//     m.def("args_function", [](py::args args) -> py::tuple { return args; });
+//                                                                    ^~~~
+// test_kwargs_and_defaults.cpp:46:68: note: call 'std::move' explicitly to avoid copying
+//     m.def("args_function", [](py::args args) -> py::tuple { return args; });
+//                                                                    ^~~~
+//                                                                    std::move(args)
 #endif
 
 // Pybind offers detailed error messages by default for all builts that are debug (through the
