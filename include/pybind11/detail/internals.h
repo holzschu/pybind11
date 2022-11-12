@@ -572,11 +572,24 @@ inline void clear_local_internals() {
 
     if (internals_ptr_ptr) {
 		detail::get_internals().registered_types_cpp.clear();
+		detail::get_internals().registered_types_py.clear();
 		detail::get_internals().registered_exception_translators.clear();
+		detail::get_internals().inactive_override_cache.clear();
         delete *internals_ptr_ptr;
         *internals_ptr_ptr = nullptr;
     }
 }
+
+/// Checks if the local_internals pointer is still valid, or if it has already been released:
+inline bool local_internals_cleared() {
+    auto **&internals_pp = get_internals_pp();
+    if (internals_pp && *internals_pp) {
+        return false;
+    } else {
+    	return true;
+	}
+}
+
 
 /// Constructs a std::string with the given arguments, stores it in `internals`, and returns its
 /// `c_str()`.  Such strings objects have a long storage duration -- the internal strings are only
