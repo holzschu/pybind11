@@ -35,6 +35,8 @@
 #    include <cxxabi.h>
 #endif
 
+PYBIND11_NAMESPACE_BEGIN(PYBIND11_NAMESPACE)
+
 /* https://stackoverflow.com/questions/46798456/handling-gccs-noexcept-type-warning
    This warning is about ABI compatibility, not code health.
    It is only actually needed in a couple places, but apparently GCC 7 "generates this warning if
@@ -43,11 +45,10 @@
    No other GCC version generates this warning.
  */
 #if defined(__GNUC__) && __GNUC__ == 7
-#    pragma GCC diagnostic push
-#    pragma GCC diagnostic ignored "-Wnoexcept-type"
+PYBIND11_WARNING_DISABLE_GCC("-Wnoexcept-type")
 #endif
 
-PYBIND11_NAMESPACE_BEGIN(PYBIND11_NAMESPACE)
+PYBIND11_WARNING_DISABLE_MSVC(4127)
 
 PYBIND11_NAMESPACE_BEGIN(detail)
 
@@ -83,6 +84,7 @@ public:
     cpp_function() = default;
     // NOLINTNEXTLINE(google-explicit-constructor)
     cpp_function(std::nullptr_t) {}
+    cpp_function(std::nullptr_t, const is_setter &) {}
 
     /// Construct a cpp_function from a vanilla function pointer
     template <typename Return, typename... Args, typename... Extra>
@@ -177,22 +179,22 @@ protected:
         auto *rec = unique_rec.get();
 
         /* Store the capture object directly in the function record if there is enough space */
-        if (PYBIND11_SILENCE_MSVC_C4127(sizeof(capture) <= sizeof(rec->data))) {
+        if (sizeof(capture) <= sizeof(rec->data)) {
             /* Without these pragmas, GCC warns that there might not be
                enough space to use the placement new operator. However, the
                'if' statement above ensures that this is the case. */
-#if defined(__GNUG__) && __GNUC__ >= 6 && !defined(__clang__) && !defined(__INTEL_COMPILER)
-#    pragma GCC diagnostic push
-#    pragma GCC diagnostic ignored "-Wplacement-new"
+            PYBIND11_WARNING_PUSH
+
+#if defined(__GNUG__) && __GNUC__ >= 6
+            PYBIND11_WARNING_DISABLE_GCC("-Wplacement-new")
 #endif
+
             new ((capture *) &rec->data) capture{std::forward<Func>(f)};
-#if defined(__GNUG__) && __GNUC__ >= 6 && !defined(__clang__) && !defined(__INTEL_COMPILER)
-#    pragma GCC diagnostic pop
+
+#if !PYBIND11_HAS_STD_LAUNDER
+            PYBIND11_WARNING_DISABLE_GCC("-Wstrict-aliasing")
 #endif
-#if defined(__GNUG__) && !PYBIND11_HAS_STD_LAUNDER && !defined(__INTEL_COMPILER)
-#    pragma GCC diagnostic push
-#    pragma GCC diagnostic ignored "-Wstrict-aliasing"
-#endif
+
             // UB without std::launder, but without breaking ABI and/or
             // a significant refactoring it's "impossible" to solve.
             if (!std::is_trivially_destructible<capture>::value) {
@@ -202,9 +204,7 @@ protected:
                     data->~capture();
                 };
             }
-#if defined(__GNUG__) && !PYBIND11_HAS_STD_LAUNDER && !defined(__INTEL_COMPILER)
-#    pragma GCC diagnostic pop
-#endif
+            PYBIND11_WARNING_POP
         } else {
             rec->data[0] = new capture{std::forward<Func>(f)};
             rec->free_data = [](function_record *r) { delete ((capture *) r->data[0]); };
@@ -245,10 +245,16 @@ protected:
             using Guard = extract_guard_t<Extra...>;
 
             /* Perform the function call */
-            handle result
-                = cast_out::cast(std::move(args_converter).template call<Return, Guard>(cap->f),
-                                 policy,
-                                 call.parent);
+            handle result;
+            if (call.func.is_setter) {
+                (void) std::move(args_converter).template call<Return, Guard>(cap->f);
+                result = none().release();
+            } else {
+                result = cast_out::cast(
+                    std::move(args_converter).template call<Return, Guard>(cap->f),
+                    policy,
+                    call.parent);
+            }
 
             /* Invoke call policy post-call hook */
             process_attributes<Extra...>::postcall(call, result);
@@ -502,8 +508,8 @@ protected:
             rec->def->ml_flags = METH_VARARGS | METH_KEYWORDS;
 
             capsule rec_capsule(unique_rec.release(),
+                                detail::get_function_record_capsule_name(),
                                 [](void *ptr) { destruct((detail::function_record *) ptr); });
-            rec_capsule.set_name(detail::get_function_record_capsule_name());
             guarded_strdup.release();
 
             object scope_module;
@@ -1427,9 +1433,9 @@ template <typename T, enable_if_t<has_operator_delete<T>::value, int> = 0>
 void call_operator_delete(T *p, size_t, size_t) {
     T::operator delete(p);
 }
-template <
-    typename T,
-    enable_if_t<!has_operator_delete<T>::value && has_operator_delete_size<T>::value, int> = 0>
+template <typename T,
+          enable_if_t<!has_operator_delete<T>::value && has_operator_delete_size<T>::value, int>
+          = 0>
 void call_operator_delete(T *p, size_t s, size_t) {
     T::operator delete(p, s);
 }
@@ -1730,7 +1736,8 @@ public:
     template <typename Getter, typename Setter, typename... Extra>
     class_ &
     def_property(const char *name, const Getter &fget, const Setter &fset, const Extra &...extra) {
-        return def_property(name, fget, cpp_function(method_adaptor<type>(fset)), extra...);
+        return def_property(
+            name, fget, cpp_function(method_adaptor<type>(fset), is_setter()), extra...);
     }
     template <typename Getter, typename... Extra>
     class_ &def_property(const char *name,
@@ -1841,8 +1848,7 @@ private:
         if (holder_ptr) {
             init_holder_from_existing(v_h, holder_ptr, std::is_copy_constructible<holder_type>());
             v_h.set_holder_constructed();
-        } else if (PYBIND11_SILENCE_MSVC_C4127(detail::always_construct_holder<holder_type>::value)
-                   || inst->owned) {
+        } else if (detail::always_construct_holder<holder_type>::value || inst->owned) {
             new (std::addressof(v_h.holder<holder_type>())) holder_type(v_h.value_ptr<type>());
             v_h.set_holder_constructed();
         }
@@ -1974,29 +1980,35 @@ struct enum_base {
             name("name"),
             is_method(m_base));
 
-        m_base.attr("__doc__") = static_property(
-            cpp_function(
-                [](handle arg) -> std::string {
-                    std::string docstring;
-                    dict entries = arg.attr("__entries");
-                    if (((PyTypeObject *) arg.ptr())->tp_doc) {
-                        docstring += std::string(((PyTypeObject *) arg.ptr())->tp_doc) + "\n\n";
-                    }
-                    docstring += "Members:";
-                    for (auto kv : entries) {
-                        auto key = std::string(pybind11::str(kv.first));
-                        auto comment = kv.second[int_(1)];
-                        docstring += "\n\n  " + key;
-                        if (!comment.is_none()) {
-                            docstring += " : " + (std::string) pybind11::str(comment);
+        if (options::show_enum_members_docstring()) {
+            m_base.attr("__doc__") = static_property(
+                cpp_function(
+                    [](handle arg) -> std::string {
+                        std::string docstring;
+                        dict entries = arg.attr("__entries");
+                        if (((PyTypeObject *) arg.ptr())->tp_doc) {
+                            docstring += std::string(
+                                reinterpret_cast<PyTypeObject *>(arg.ptr())->tp_doc);
+                            docstring += "\n\n";
                         }
-                    }
-                    return docstring;
-                },
-                name("__doc__")),
-            none(),
-            none(),
-            "");
+                        docstring += "Members:";
+                        for (auto kv : entries) {
+                            auto key = std::string(pybind11::str(kv.first));
+                            auto comment = kv.second[int_(1)];
+                            docstring += "\n\n  ";
+                            docstring += key;
+                            if (!comment.is_none()) {
+                                docstring += " : ";
+                                docstring += pybind11::str(comment).cast<std::string>();
+                            }
+                        }
+                        return docstring;
+                    },
+                    name("__doc__")),
+                none(),
+                none(),
+                "");
+        }
 
         m_base.attr("__members__") = static_property(cpp_function(
                                                          [](handle arg) -> dict {
@@ -2876,7 +2888,3 @@ inline function get_overload(const T *this_ptr, const char *name) {
     PYBIND11_OVERRIDE_PURE(PYBIND11_TYPE(ret_type), PYBIND11_TYPE(cname), fn, __VA_ARGS__);
 
 PYBIND11_NAMESPACE_END(PYBIND11_NAMESPACE)
-
-#if defined(__GNUC__) && __GNUC__ == 7
-#    pragma GCC diagnostic pop // -Wnoexcept-type
-#endif

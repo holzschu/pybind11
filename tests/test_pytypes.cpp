@@ -99,6 +99,8 @@ void m_defs(py::module_ &m) {
 } // namespace handle_from_move_only_type_with_operator_PyObject
 
 TEST_SUBMODULE(pytypes, m) {
+    m.def("obj_class_name", [](py::handle obj) { return py::detail::obj_class_name(obj.ptr()); });
+
     handle_from_move_only_type_with_operator_PyObject::m_defs(m);
 
     // test_bool
@@ -256,6 +258,15 @@ TEST_SUBMODULE(pytypes, m) {
         return py::capsule((void *) 1234, [](void *ptr) {
             py::print("destructing capsule: {}"_s.format((size_t) ptr));
         });
+    });
+
+    m.def("return_capsule_with_destructor_3", []() {
+        py::print("creating capsule");
+        auto cap = py::capsule((void *) 1233, "oname", [](void *ptr) {
+            py::print("destructing capsule: {}"_s.format((size_t) ptr));
+        });
+        py::print("original name: {}"_s.format(cap.name()));
+        return cap;
     });
 
     m.def("return_renamed_capsule_with_destructor_2", []() {
