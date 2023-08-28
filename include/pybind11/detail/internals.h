@@ -597,7 +597,6 @@ inline local_internals &get_local_internals() {
 inline void clear_local_internals() {
 	// Copied from embed.h finalize_interpreter(), added cleanup on internals, not just local.
     handle builtins(PyEval_GetBuiltins());
-    const char *id = PYBIND11_INTERNALS_ID;
 
     // Get the internals pointer (without creating it if it doesn't exist).  It's possible for the
     // internals to be created during Py_Finalize() (e.g. if a py::capsule calls `get_internals()`
